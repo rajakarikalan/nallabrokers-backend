@@ -417,6 +417,19 @@ app.post('/api/properties', verifyToken, async (req, res) => {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     
+    // Helper functions to convert empty strings to null
+    const toInt = (value) => {
+      if (value === '' || value === null || value === undefined) return null;
+      const num = parseInt(value);
+      return isNaN(num) ? null : num;
+    };
+
+    const toFloat = (value) => {
+      if (value === '' || value === null || value === undefined) return null;
+      const num = parseFloat(value);
+      return isNaN(num) ? null : num;
+    };
+    
     // Create PostGIS point
     const location = `POINT(${longitude} ${latitude})`;
     
@@ -436,8 +449,8 @@ app.post('/api/properties', verifyToken, async (req, res) => {
         req.user.id, title, description, property_type, selling_price,
         commission_percent || 1.0, address, district, city, village, state || 'Tamil Nadu', pincode,
         latitude, longitude, longitude, latitude,
-        land_area, built_up_area, bedrooms || 0, bathrooms || 0,
-        floor_number, total_floors, facing,
+        toFloat(land_area), toFloat(built_up_area), toInt(bedrooms), toInt(bathrooms),
+        toInt(floor_number), toInt(total_floors), facing,
         north_neighbor, south_neighbor, east_neighbor, west_neighbor,
         survey_number, patta_number, chitta_number,
         JSON.stringify(images), JSON.stringify(videos), JSON.stringify(documents)
@@ -457,7 +470,7 @@ app.post('/api/properties', verifyToken, async (req, res) => {
       }
     }
     
-    // Save documents to property_documents table (for backward compatibility)
+    // Save documents to property_documents table
     if (documents && documents.length > 0) {
       for (const doc of documents) {
         await pool.query(
