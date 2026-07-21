@@ -204,14 +204,16 @@ app.get('/api/auth/me', verifyToken, async (req, res) => {
 // ---------- PROPERTIES: GET ALL (with filters) ----------
 app.get('/api/properties', async (req, res) => {
   try {
-    const { district, city, property_type, min_price, max_price, status, limit = 50, offset = 0 } = req.query;
+    const { district, city, village, property_type, min_price, max_price, status, limit = 50, offset = 0 } = req.query;
     
     let query = `
       SELECT 
         p.*,
         u.full_name AS mediator_name,
-        u.phone AS mediator_phone,
         u.company_name AS mediator_company,
+        -- REPLACE mediator contact with CLIENT contact
+        '${process.env.CLIENT_PHONE || '9999999999'}' AS client_phone,
+        '${process.env.CLIENT_EMAIL || 'info@nallabrokers.com'}' AS client_email,
         (SELECT pi.image_url FROM property_images pi WHERE pi.property_id = p.id AND pi.is_main = TRUE LIMIT 1) AS main_image
       FROM properties p
       LEFT JOIN users u ON p.mediator_id = u.id
@@ -338,10 +340,10 @@ app.get('/api/properties/:propertyId', async (req, res) => {
       `SELECT 
         p.*,
         u.full_name AS mediator_name,
-        u.phone AS mediator_phone,
-        u.email AS mediator_email,
         u.company_name AS mediator_company,
-        u.mediator_license AS mediator_license,
+        -- REPLACE mediator contact with CLIENT contact
+        '${process.env.CLIENT_PHONE || '9999999999'}' AS contact_phone,
+        '${process.env.CLIENT_EMAIL || 'info@nallabrokers.com'}' AS contact_email,
         (SELECT JSON_AGG(json_build_object('id', pi.id, 'image_url', pi.image_url, 'is_main', pi.is_main, 'order_index', pi.order_index)) 
          FROM property_images pi WHERE pi.property_id = p.id) AS images,
         (SELECT JSON_AGG(json_build_object('id', pd.id, 'document_name', pd.document_name, 'document_url', pd.document_url, 'document_type', pd.document_type)) 
@@ -401,7 +403,13 @@ app.post('/api/properties', verifyToken, async (req, res) => {
       north_neighbor,
       south_neighbor,
       east_neighbor,
-      west_neighbor
+      west_neighbor,
+      survey_number,
+      patta_number,
+      chitta_number,
+      images = [],
+      videos = [],
+      documents = []
     } = req.body;
     
     // Validate required fields
@@ -419,8 +427,10 @@ app.post('/api/properties', verifyToken, async (req, res) => {
         latitude, longitude, location,
         land_area, built_up_area, bedrooms, bathrooms,
         floor_number, total_floors, facing,
-        north_neighbor, south_neighbor, east_neighbor, west_neighbor
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_SetSRID(ST_MakePoint($15, $16), 4326), $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27)
+        north_neighbor, south_neighbor, east_neighbor, west_neighbor,
+        survey_number, patta_number, chitta_number,
+        images, videos, documents
+      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, ST_SetSRID(ST_MakePoint($15, $16), 4326), $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33)
       RETURNING id, property_id, title, description, selling_price, district, city, latitude, longitude`,
       [
         req.user.id, title, description, property_type, selling_price,
@@ -428,17 +438,47 @@ app.post('/api/properties', verifyToken, async (req, res) => {
         latitude, longitude, longitude, latitude,
         land_area, built_up_area, bedrooms || 0, bathrooms || 0,
         floor_number, total_floors, facing,
-        north_neighbor, south_neighbor, east_neighbor, west_neighbor
+        north_neighbor, south_neighbor, east_neighbor, west_neighbor,
+        survey_number, patta_number, chitta_number,
+        JSON.stringify(images), JSON.stringify(videos), JSON.stringify(documents)
       ]
     );
+    
+    const propertyId = result.rows[0].id;
+    
+    // Save images to property_images table (for backward compatibility)
+    if (images && images.length > 0) {
+      for (let i = 0; i < images.length; i++) {
+        await pool.query(
+          `INSERT INTO property_images (property_id, image_url, is_main, order_index) 
+           VALUES ($1, $2, $3, $4)`,
+          [propertyId, images[i], i === 0, i]
+        );
+      }
+    }
+    
+    // Save documents to property_documents table (for backward compatibility)
+    if (documents && documents.length > 0) {
+      for (const doc of documents) {
+        await pool.query(
+          `INSERT INTO property_documents (property_id, document_name, document_url, document_type) 
+           VALUES ($1, $2, $3, $4)`,
+          [propertyId, doc.name || 'Document', doc.url, doc.type || 'other']
+        );
+      }
+    }
     
     res.status(201).json({
       message: 'Property posted successfully!',
       property: result.rows[0]
     });
+    
   } catch (error) {
-    console.error('Create property error:', error);
-    res.status(500).json({ error: 'Server error creating property' });
+    console.error('❌ Create property error:', error);
+    res.status(500).json({ 
+      error: 'Server error creating property', 
+      details: error.message 
+    });
   }
 });
 
